@@ -1,9 +1,13 @@
 import io
 import os
 import zipfile
+from pathlib import Path
 
 import boto3
 import requests
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 s3 = boto3.client(
     "s3",

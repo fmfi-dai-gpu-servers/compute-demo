@@ -1,11 +1,12 @@
 import asyncio
-import json
 import os
+from pathlib import Path
 
 from dotenv import dotenv_values
 from ray.job_submission import JobSubmissionClient
 
-env = dotenv_values(".env")
+ROOT = Path(__file__).resolve().parent.parent.parent
+env = dotenv_values(ROOT / ".env")
 
 client = JobSubmissionClient(
     address="https://ray.c.dai.fmph.uniba.sk",
