@@ -20,7 +20,17 @@ For platform documentation (service URLs, authentication, resource limits), see 
 
 You need a GitHub account that is a **public** member of the [`fmfi-dai-gpu-servers`](https://github.com/orgs/fmfi-dai-gpu-servers) organization. If you haven't used the platform before, follow the [Quick Start](https://github.com/fmfi-dai-gpu-servers/compute-wiki#quick-start) guide in the wiki first.
 
-### 2. Clone and Install
+### 2. Install uv
+
+[uv](https://docs.astral.sh/uv/) is a fast Python package manager. Install it with:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+> See [uv docs](https://docs.astral.sh/uv/getting-started/installation/) for alternative install methods (pip, brew, etc.).
+
+### 3. Clone and Install
 
 ```bash
 git clone https://github.com/fmfi-dai-gpu-servers/compute-demo.git
@@ -28,7 +38,9 @@ cd compute-demo
 uv sync
 ```
 
-### 3. Configure Credentials
+This creates a `.venv` with all dependencies (Ray, boto3, MLflow, etc.).
+
+### 4. Configure Credentials
 
 Create a `.env` file in the repo root with your credentials:
 
@@ -47,22 +59,27 @@ MLFLOW_TRACKING_PASSWORD="your-access-token"
 
 > `.env` is gitignored — your credentials won't be committed.
 
-### 4. Authenticate with Ray
+### 5. Authenticate with Ray
 
 ```bash
-eval $(python ray_auth.py)
+uv run python ray_auth.py
 ```
 
-This opens a browser-based device authorization flow. After you authenticate, `RAY_ADDRESS` and `RAY_AUTH_TOKEN` are set in your shell.
-
-### 5. Run an Example
+This opens a browser-based device authorization flow. After you authenticate, it prints `export` statements — use `eval` to activate them:
 
 ```bash
-cd examples/f1-predictor
-python submit.py
+eval $(uv run python ray_auth.py)
 ```
 
-This submits the job to the remote Ray cluster and streams logs to your terminal.
+This sets `RAY_ADDRESS` and `RAY_AUTH_TOKEN` in your shell.
+
+### 6. Run an Example
+
+```bash
+uv run python examples/f1-predictor/submit.py
+```
+
+This submits the job to the remote Ray cluster and streams logs to your terminal. Run from the repo root — `uv run` uses the `.venv` automatically.
 
 ---
 
