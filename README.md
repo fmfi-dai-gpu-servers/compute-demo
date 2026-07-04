@@ -62,16 +62,10 @@ MLFLOW_TRACKING_PASSWORD="your-access-token"
 ### 5. Authenticate with Ray
 
 ```bash
-uv run python ray_auth.py
-```
-
-This opens a browser-based device authorization flow. After you authenticate, it prints `export` statements — use `eval` to activate them:
-
-```bash
 eval $(uv run python ray_auth.py)
 ```
 
-This sets `RAY_ADDRESS` and `RAY_AUTH_TOKEN` in your shell.
+This opens a browser-based device authorization flow and exports `RAY_ADDRESS` and `RAY_AUTH_TOKEN` into your shell. Doing this once up front means submission won't pause to re-authenticate. (Optional — if you skip it, the submission step below triggers the same flow automatically when the token is missing or expired.)
 
 ### 6. Run an Example
 
@@ -211,47 +205,54 @@ mlflow.log_text(pred_csv, "predictions.csv")
 
 ### How Job Submission Works
 
-`submit.py` handles packaging your code and sending it to the cluster:
+`submit.py` packages your code and sends it to the cluster using the `compute` helper library:
 
 ```python
 from pathlib import Path
-from dotenv import dotenv_values
-from ray.job_submission import JobSubmissionClient
 
-ROOT = Path(__file__).resolve().parent.parent.parent
-env = dotenv_values(ROOT / ".env")
+from compute import run_job
 
-client = JobSubmissionClient(
-    address="https://ray.c.dai.fmph.uniba.sk",
-    headers={"Authorization": f"Bearer {os.environ['RAY_AUTH_TOKEN']}"},
-)
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent.parent
 
-runtime_env = {
-    "pip": ["pandas", "scikit-learn", "scipy", "boto3", "python-dotenv", "mlflow"],
-    "working_dir": ".",
-    "env_vars": {k: v.strip('"') for k, v in env.items()},
-}
-
-job_id = client.submit_job(
-    entrypoint="python f1_ray_demo.py",
-    runtime_env=runtime_env,
-)
+if __name__ == "__main__":
+    job_id, status = run_job(
+        entrypoint="python f1_ray_demo.py",
+        working_dir=str(HERE),
+        env_file=str(ROOT / ".env"),
+        pip=["pandas", "scikit-learn", "scipy", "boto3", "python-dotenv", "mlflow"],
+    )
+    print(f"\nJob {job_id} finished with status: {status}")
 ```
 
-Three things happen here:
+`run_job` is a single call that authenticates, builds the runtime environment, submits the job, streams its logs to your terminal, and raises if the job fails. Under the hood it assembles the Ray `runtime_env` from three pieces:
 
 | `runtime_env` field | What it does |
 |---------------------|--------------|
 | `"pip": [...]` | Auto-installs these packages on the worker nodes |
-| `"working_dir": "."` | Ships your local files (the demo scripts) to the workers |
+| `"working_dir": "..."` | Ships your local files (the demo scripts) to the workers |
 | `"env_vars": {...}` | Forwards your `.env` credentials so the job can reach S3 and MLflow |
 
-After submission, logs are streamed back in real time:
+Authentication is handled automatically — if `RAY_AUTH_TOKEN` is missing or expired, `run_job` launches the Keycloak device flow from `ray_auth.py`. Logs are then streamed back in real time and the final `JobStatus` is returned.
+
+#### The `compute` library
+
+`run_job` covers the common case in one call. For finer control (submit now, tail later, inspect status, reuse across jobs), use `ComputeClient` directly:
 
 ```python
-async for line in client.tail_job_logs(job_id):
-    print(line, end="")
+from compute import ComputeClient
+
+client = ComputeClient()                 # auto-resolves address + token
+job_id = client.submit(
+    entrypoint="python train.py",
+    pip=["pandas"],
+    env_vars={"EXTRA": "value"},         # added on top of platform creds
+)
+client.tail_logs(job_id)                 # streams until the job ends
+print(client.status(job_id))
 ```
+
+Reference: `run_job`, `ComputeClient`, `load_env`, `build_runtime_env`, and `JobFailedError` are all importable from `compute`. The platform's service URLs and the credential prefixes forwarded by default (`S3_*`, `MLFLOW_*`) live in `compute/config.py`.
 
 ### Monitoring Results
 
@@ -296,17 +297,16 @@ Without `ray.put()`, the data would be serialized separately for each task.
 
 ### Configuring with .env + dotenv
 
-Centralize all service credentials in a root `.env` file and load them with `python-dotenv`:
+Centralize all service credentials in a root `.env` file. Two layers use it:
+
+**Inside your job script** (runs on the cluster), load it with `python-dotenv` so local `os.getenv(...)` calls resolve:
 
 ```python
-from pathlib import Path
-from dotenv import dotenv_values, load_dotenv
-
-ROOT = Path(__file__).resolve().parent.parent.parent
-env = dotenv_values(ROOT / ".env")
+from dotenv import load_dotenv
+load_dotenv()
 ```
 
-When submitting jobs, forward the credentials via `runtime_env["env_vars"]` so workers can access S3 and MLflow without needing the `.env` file.
+**At submission time**, `run_job` / `ComputeClient.submit` read the `.env` automatically and forward the platform credentials (`S3_*`, `MLFLOW_*`) to workers via `runtime_env["env_vars"]` — so workers can reach S3 and MLflow without needing the `.env` file. Pass `env_file=` to point elsewhere, or `env_vars={...}` to add extra variables on top.
 
 ### Reading DataFrames from S3
 
