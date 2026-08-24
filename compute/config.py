@@ -18,5 +18,7 @@ TOKEN_URL = f"{KEYCLOAK_URL}/realms/{REALM}/protocol/openid-connect/token"
 # worker pods via runtime_env["env_vars"] so jobs can reach S3 and MLflow.
 PLATFORM_ENV_PREFIXES = ("S3_", "MLFLOW_")
 
+
+PROVISIONER_URL = "https://provision.c.dai.fmph.uniba.sk"
 # Treat a token as expired slightly before its real expiry to avoid races.
 TOKEN_SKEW_SECONDS = 60

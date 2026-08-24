@@ -10,7 +10,7 @@ For platform documentation (service URLs, authentication, resource limits), see 
 
 | Example | What It Demonstrates |
 |---------|---------------------|
-| [**F1 Race Predictor**](examples/f1-predictor/) | Full ML pipeline: S3 data loading, distributed hyperparameter tuning with Ray, experiment tracking with MLflow, result storage back to S3 |
+| [**CIFAR-10 GPU Marathon**](examples/cifar-gpu-marathon/) | Long-running deep-learning workload: GPU worker pool, population-based hyperparameter evolution, multi-GPU DDP training, live MLflow metrics, model artifacts to S3 |
 
 ---
 
@@ -264,6 +264,94 @@ Once the job is running, you can watch progress in two places:
 The job also prints direct links when it finishes.
 
 ---
+
+## Example: CIFAR-10 GPU Training Marathon
+
+A longer-running, GPU-saturating counterpart to the F1 demo: a single Ray job that keeps every GPU worker busy for a configurable wall-clock budget (default ~2 hours, scalable to any duration).
+
+```
+  S3 (CIFAR-10) ──→  GPU worker pool (Ray actors, autoscaled from zero)
+                          │
+                          ├─ Stage 1: HPO evolution — population-based search,
+                          │            every trial logs per-epoch metrics to MLflow
+                          │
+                          └─ Stage 2: final multi-GPU DDP training (gloo) of the
+                                       best config → weights uploaded to S3
+```
+
+### Run It
+
+```bash
+# one-time: upload CIFAR-10 to your S3 bucket (~170 MB)
+uv run python examples/cifar-gpu-marathon/upload_dataset.py
+
+# default: ~2 h budget, 4 GPU workers, 3-minute HPO trials
+uv run python examples/cifar-gpu-marathon/submit.py
+```
+
+Scale it without touching code — set any of these before `submit.py`:
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `MARATHON_RUNTIME_MIN` | `120` | Total job budget; HPO gets ~60%, final DDP ~25% |
+| `MARATHON_NUM_GPUS` | `4` | Parallel trial workers (capped at cluster capacity) |
+| `MARATHON_TRIAL_MIN` | `3` | Minutes per HPO trial — longer trials converge further |
+
+For example, a 6-hour soak test with 5-minute trials:
+
+```bash
+MARATHON_RUNTIME_MIN=360 MARATHON_TRIAL_MIN=5 uv run python examples/cifar-gpu-marathon/submit.py
+```
+
+### What Makes It Different from the F1 Demo
+
+- **GPU actors instead of CPU tasks.** Each `TrialWorker` actor reserves one HAMi vGPU via `@ray.remote(num_gpus=1)`, downloads CIFAR-10 from S3 once into RAM, and then serves many HPO trials without re-loading data. Creating the actors triggers the Ray autoscaler's scale-from-zero; actors stay alive for the whole job so workers never hit the 120 s idle timeout mid-run.
+- **Population-based evolution.** Random configs first; once results exist, the top-4 configs breed mutated children (width, depth, LR, batch size, label smoothing). Trial length is bounded by a deadline so the stage lands on budget regardless of epoch speed.
+- **Hand-rolled multi-GPU DDP.** The final stage converts the same actors into `torch.distributed` ranks (gloo backend over TCP, master = worker 0's pod IP) — no NVLink assumptions, works across vGPU slices and nodes.
+- **Live MLflow.** Every trial is an MLflow run streaming per-epoch `val_acc`/`train_loss`; the job closes with a `marathon-summary` run logging the best config and final DDP accuracy.
+
+### Cluster Gotchas Baked Into the Code
+
+- **The head node has no torch.** The job driver must never `import torch`, and every actor return value must be plain JSON primitives. Returning e.g. `torch.__version__` (a `TorchVersion` str-subclass) embeds a torch-module reference in the pickle — unpickling on the head fails with `ModuleNotFoundError` and kills the job. Catch exceptions inside GPU code and return `str(...)` summaries.
+- **vGPU memory is capped (~2 GiB per worker).** The config space constrains `width` against `batch` (measured: batch 256 / width 64 ≈ 1.05 GiB peak) and OOM'd trials are reported and skipped, not fatal.
+- **Workers are 1.5 CPU / 3.5 GiB RAM.** Data augmentation stays in numpy, evaluation batches are 512.
+- **MLflow artifact uploads currently fail** with `PermissionError` from job pods (`log_text`/`log_artifact`); metrics and params log fine. The marathon therefore stores model weights in S3 and logs metrics to MLflow; the summary is printed as `RESULT_JSON` on stdout instead of an artifact.
+
+---
+
+
+## GPU Allocation on the Platform
+
+Every user gets their **own RayCluster** with their **own Volcano queue** — no
+more competing inside one shared cluster. This happens automatically:
+`ComputeClient` (and therefore `run_job`) calls the platform provisioner
+(`provision.c.dai.fmph.uniba.sk`) with your Keycloak token before submitting,
+which creates on first use:
+
+- a Volcano queue `u-<username>` with a fair-share **weight** (relative share
+  when GPUs are contended) and a hard **capability** ceiling (default: 2 GPU
+  workers + your head pod);
+- a RayCluster `ray-<username>` (workers scale 0 → max inside your queue) at
+  `ray-<username>.c.dai.fmph.uniba.sk` behind the same Keycloak login;
+- an idle garbage collector that deletes clusters unused for 24 h (recreated
+  transparently on your next submit).
+
+Semantics: idle capacity is **borrowable** up to your capability ceiling;
+preemption is off, so borrowed GPUs are only released when the borrowing job
+finishes. The shared cluster remains available with `RAY_SHARED=1` (or
+`ComputeClient(user_cluster=False)`).
+
+Admin knobs (ConfigMaps in `ray-system`, no redeploys):
+
+- `ray-user-quotas` — `quotas.yaml` with `defaults` plus per-`users:` overrides
+  (`weight`, `capability.{cpu,memory,volcano.sh/vgpu-number}`, `max_workers`,
+  `idle_hours`) and `groups:` weights;
+- `ray-user-groups` — one `username: group` line per user; grouped users get
+  their queue placed under `g-<group>`, so a group shares its parent slice.
+
+Note: the Keycloak gate is per-org, not per-cluster — any org member who knows
+your cluster URL can open your dashboard. The CLI always targets your own
+cluster.
 
 ## Key Patterns Reference
 

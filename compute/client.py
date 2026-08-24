@@ -27,7 +27,7 @@ from typing import Any
 from dotenv import dotenv_values
 from ray.job_submission import JobStatus, JobSubmissionClient
 
-from . import auth, config
+from . import auth, config, provision
 
 # JobStatus values that will not change on their own.
 _TERMINAL_STATUSES = frozenset(
@@ -99,14 +99,27 @@ class ComputeClient:
 
     Address and token resolve from (1) constructor args, then (2) the
     ``RAY_ADDRESS`` / ``RAY_AUTH_TOKEN`` environment variables, then (3) the
-    platform defaults from :mod:`compute.config`. If no usable token is found
-    the Keycloak device flow is triggered automatically.
+    caller's own provisioned cluster via the platform provisioner (set
+    ``RAY_SHARED=1`` or pass ``user_cluster=False`` to use the shared cluster
+    at ``config.RAY_ADDRESS`` instead). If no usable token is found the
+    Keycloak device flow is triggered automatically.
     """
 
-    def __init__(self, address: str | None = None, token: str | None = None):
-        resolved_address = address or os.environ.get(
-            auth.ENV_ADDRESS, config.RAY_ADDRESS
-        )
+    def __init__(
+        self,
+        address: str | None = None,
+        token: str | None = None,
+        user_cluster: bool = True,
+        resources: dict | None = None,
+    ):
+        if address:
+            resolved_address = address
+        elif env_address := os.environ.get(auth.ENV_ADDRESS):
+            resolved_address = env_address
+        elif user_cluster and not os.environ.get("RAY_SHARED"):
+            resolved_address = provision.ensure_cluster(resources=resources)
+        else:
+            resolved_address = config.RAY_ADDRESS
         resolved_token = token or auth.ensure_token()
         self.address = resolved_address
         self._client = JobSubmissionClient(
@@ -199,16 +212,21 @@ def run_job(
     runtime_env: dict[str, Any] | None = None,
     tail: bool = True,
     client: ComputeClient | None = None,
+    resources: dict | None = None,
     **kwargs: Any,
 ) -> tuple[str, JobStatus]:
     """Submit a job, stream its logs, and return ``(job_id, status)``.
 
-    Accepts the same arguments as :meth:`ComputeClient.submit`. Logs are
-    streamed to stdout (disabled with ``tail=False``, in which case the job is
-    polled until completion). Raises :class:`JobFailedError` if the job ends
-    STOPPED, FAILED, or TERMINATED.
+    Accepts the same arguments as :meth:`ComputeClient.submit`. ``resources``
+    declares the per-user cluster's worker shape (cpus, mem_gb, gpus,
+    gpu_frac or gpu_mem_gb, gpu_type; see
+    :func:`compute.provision.ensure_cluster`) and is ignored when ``client``
+    or ``RAY_SHARED=1`` bypasses provisioning. Logs are streamed to stdout
+    (disabled with ``tail=False``, in which case the job is polled until
+    completion). Raises :class:`JobFailedError` if the job ends STOPPED,
+    FAILED, or TERMINATED.
     """
-    c = client or ComputeClient()
+    c = client or ComputeClient(resources=resources)
     job_id = c.submit(
         entrypoint,
         pip=pip,

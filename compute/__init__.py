@@ -18,12 +18,14 @@ from .client import (
     load_env,
     run_job,
 )
+from .provision import ensure_cluster, inventory
 
 __all__ = [
     "ComputeClient",
     "JobFailedError",
     "build_runtime_env",
-    "ensure_token",
+    "ensure_cluster",
+    "inventory",
     "get_token",
     "is_token_expired",
     "load_env",
