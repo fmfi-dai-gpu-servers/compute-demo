@@ -312,7 +312,7 @@ with mlflow.start_run(run_name="f1-best-model"):
     print(f"  -> {mlflow_url}")
 
 print(f"\n{'=' * 50}")
-print(f"Ray Dashboard:  ${RAY_ADDRESS}")
+print("Ray Dashboard:  your ray-<user> URL or the datasets Compute tab")
 print(f"MLflow UI:      https://mlflow.c.dai.fmph.uniba.sk")
 print(f"Datasets:       https://datasets.c.dai.fmph.uniba.sk")
 print(f"{'=' * 50}")
