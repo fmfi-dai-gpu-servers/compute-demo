@@ -181,7 +181,7 @@ def evaluate_config(config: dict, run_name: str) -> dict:
     mae = -scores.mean()
 
     mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI"))
-    mlflow.set_experiment("f1-position-predictor")
+    mlflow.set_experiment("f1-position-predictor-v2")
     with mlflow.start_run(run_name=run_name):
         mlflow.log_params({k: str(v) for k, v in config.items()})
         mlflow.log_metric("mae", mae)
@@ -219,7 +219,7 @@ for _ in range(N_RANDOM):
     configs.append(cfg)
 
 print(f"\nPhase 1: Random search ({N_RANDOM} configs)...")
-print(f"Watch the Ray Dashboard: {os.getenv('RAY_ADDRESS', 'https://ray.c.dai.fmph.uniba.sk')}\n")
+print("Watch the Ray Dashboard: link on the datasets Compute tab (or your ray-<user> URL)\n")
 
 t0 = time.time()
 futures = [evaluate_config.remote(cfg, f"rand-{i:02d}-{cfg['model_type']}") for i, cfg in enumerate(configs)]
@@ -300,7 +300,7 @@ print(f"\nRESULT_JSON:{json.dumps(output)}")
 import mlflow
 
 mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI"))
-mlflow.set_experiment("f1-position-predictor")
+mlflow.set_experiment("f1-position-predictor-v2")
 with mlflow.start_run(run_name="f1-best-model"):
     mlflow.log_params({k: str(v) for k, v in best_cfg.items()})
     mlflow.log_metric("mae", best_result["mae"])
