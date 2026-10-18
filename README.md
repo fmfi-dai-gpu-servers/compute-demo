@@ -67,6 +67,12 @@ eval $(uv run python ray_auth.py)
 
 This opens a browser-based device authorization flow and exports `RAY_ADDRESS` and `RAY_AUTH_TOKEN` into your shell. Doing this once up front means submission won't pause to re-authenticate. (Optional — if you skip it, the submission step below triggers the same flow automatically when the token is missing or expired.)
 
+**Alternative — the Compute Console token panel:** log in to
+[datasets.c.dai.fmph.uniba.sk/compute](https://datasets.c.dai.fmph.uniba.sk/compute)
+and copy the ready-made `export RAY_ADDRESS=…` / `RAY_AUTH_TOKEN=…` snippet
+from the Token card (~60-minute tokens, **Renew now** for a fresh one). Good
+for quick CLI work; use the device flow for long sessions.
+
 ### 6. Run an Example
 
 ```bash
@@ -256,12 +262,11 @@ Reference: `run_job`, `ComputeClient`, `load_env`, `build_runtime_env`, and `Job
 
 ### Monitoring Results
 
-Once the job is running, you can watch progress in two places:
+Once the job is running, you can watch progress in three places:
 
-- **Ray Dashboard** at [ray.c.dai.fmph.uniba.sk](https://ray.c.dai.fmph.uniba.sk) — see running tasks, worker utilization, resource usage
+- **Compute Console** at [datasets.c.dai.fmph.uniba.sk/compute](https://datasets.c.dai.fmph.uniba.sk/compute) — your cluster card, quota panel, job list, and on-demand logs, no CLI needed
+- **Your Ray Dashboard** at `https://ray-<username>.c.dai.fmph.uniba.sk` — see running tasks, worker utilization, resource usage (the shared cluster's dashboard is [ray.c.dai.fmph.uniba.sk](https://ray.c.dai.fmph.uniba.sk))
 - **MLflow UI** at [mlflow.c.dai.fmph.uniba.sk](https://mlflow.c.dai.fmph.uniba.sk) — see experiment runs appearing in real time, compare MAE across configurations, download prediction artifacts
-
-The job also prints direct links when it finishes.
 
 ---
 
@@ -288,6 +293,12 @@ uv run python examples/cifar-gpu-marathon/upload_dataset.py
 # default: ~2 h budget, 4 GPU workers, 3-minute HPO trials
 uv run python examples/cifar-gpu-marathon/submit.py
 ```
+
+> On the default per-user queue (2 vGPU capability) set
+> `MARATHON_NUM_GPUS=2` — otherwise the worker pool stalls ~4 minutes before
+> adapting to the cap. The worker image already bakes torch+CUDA+mlflow, so
+> this job needs no `pip` runtime_env (and shipping torch via pip would hide
+> the baked stack — see [GPU Allocation](#gpu-allocation-on-the-platform)).
 
 Scale it without touching code — set any of these before `submit.py`:
 
@@ -335,6 +346,27 @@ which creates on first use:
   `ray-<username>.c.dai.fmph.uniba.sk` behind the same Keycloak login;
 - an idle garbage collector that deletes clusters unused for 24 h (recreated
   transparently on your next submit).
+
+You can also drive all of this from the UI: the **Compute tab** of the
+[datasets dashboard](https://datasets.c.dai.fmph.uniba.sk/compute) offers a
+provisioning/reconfiguration form (CPUs, memory, GPUs, GPU model, sharing
+mode, worker image from the admin catalog), cluster status, quota visibility,
+job list/logs/submit, a ~60-minute token panel with copy-paste
+`RAY_ADDRESS`/`RAY_AUTH_TOKEN` snippets, and a Stop button.
+
+**Worker sizing:** the default capability is 4.5 CPU / 9.5 Gi / 2 vGPUs and
+the head pod reserves 1.5 CPU / 2.5 Gi of it. The default worker shape
+(1.5 CPU / 3.5 Gi / 1 vGPU) fits exactly two workers; fatter workers buy
+fewer slots (`max_workers = (4.5 − 1.5) / cpus_per_worker`) and leave GPU
+capability unreachable. Prefer the defaults unless a single fat worker is
+explicitly what you want.
+
+**Worker images:** the GPU stack comes baked into catalog images (default
+`torch28-cu128`: PyTorch 2.8 + CUDA 12.8 + mlflow + boto3). Never ship
+`torch`/CUDA via `runtime_env` pip — the created venv hides the baked
+packages and GPU jobs fail (verified on this platform). pip is only for
+pure-Python extras; ask an admin to add a catalog image if you need a
+different stack.
 
 Semantics: idle capacity is **borrowable** up to your capability ceiling;
 preemption is off, so borrowed GPUs are only released when the borrowing job
