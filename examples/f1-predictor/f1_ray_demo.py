@@ -219,7 +219,7 @@ for _ in range(N_RANDOM):
     configs.append(cfg)
 
 print(f"\nPhase 1: Random search ({N_RANDOM} configs)...")
-print("Watch the Ray Dashboard: https://ray.c.dai.fmph.uniba.sk\n")
+print(f"Watch the Ray Dashboard: {os.getenv('RAY_ADDRESS', 'https://ray.c.dai.fmph.uniba.sk')}\n")
 
 t0 = time.time()
 futures = [evaluate_config.remote(cfg, f"rand-{i:02d}-{cfg['model_type']}") for i, cfg in enumerate(configs)]
@@ -312,7 +312,7 @@ with mlflow.start_run(run_name="f1-best-model"):
     print(f"  -> {mlflow_url}")
 
 print(f"\n{'=' * 50}")
-print(f"Ray Dashboard:  https://ray.c.dai.fmph.uniba.sk")
+print(f"Ray Dashboard:  ${RAY_ADDRESS}")
 print(f"MLflow UI:      https://mlflow.c.dai.fmph.uniba.sk")
 print(f"Datasets:       https://datasets.c.dai.fmph.uniba.sk")
 print(f"{'=' * 50}")
