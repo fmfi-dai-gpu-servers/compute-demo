@@ -27,6 +27,6 @@ if __name__ == "__main__":
         working_dir=str(HERE),
         env_file=str(ROOT / ".env"),
         env_vars=marathon_env,
-        pip=["mlflow", "boto3", "python-dotenv"],
+        pip=["mlflow", "boto3", "python-dotenv", "pyopenssl>=25"],
     )
     print(f"\nJob {job_id} finished with status: {status}")

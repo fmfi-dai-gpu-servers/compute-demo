@@ -17,6 +17,10 @@ if __name__ == "__main__":
             "boto3",
             "python-dotenv",
             "mlflow",
+            # the pip list transitively upgrades cryptography past what the
+            # base image's pyOpenSSL 24.2.1 can bind to (OpenSSL._lib.GEN_EMAIL
+            # AttributeError) — ship a matching pyOpenSSL in the job venv
+            "pyopenssl>=25",
         ],
     )
     print(f"\nJob {job_id} finished with status: {status}")
