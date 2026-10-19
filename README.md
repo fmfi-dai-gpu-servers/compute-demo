@@ -294,11 +294,14 @@ uv run python examples/cifar-gpu-marathon/upload_dataset.py
 uv run python examples/cifar-gpu-marathon/submit.py
 ```
 
-> On the default per-user queue (2 vGPU capability) set
-> `MARATHON_NUM_GPUS=2` — otherwise the worker pool stalls ~4 minutes before
-> adapting to the cap. The worker image already bakes torch+CUDA+mlflow, so
-> this job needs no `pip` runtime_env (and shipping torch via pip would hide
-> the baked stack — see [GPU Allocation](#gpu-allocation-on-the-platform)).
+> With the default worker shape (3 CPU) the queue fits **two** workers, so
+> set `MARATHON_NUM_GPUS=2` — otherwise the worker pool stalls ~4 minutes
+> before adapting to the cap. Want 4 parallel trial workers? Reconfigure with
+> slimmer workers first (`cpus: 1.5, mem_gb: 3.5`), then `MARATHON_NUM_GPUS=4`
+> fits the 4-vGPU ceiling exactly. The worker image already bakes
+> torch+CUDA+mlflow, so this job needs no `pip` runtime_env (and shipping
+> torch via pip would hide the baked stack — see
+> [GPU Allocation](#gpu-allocation-on-the-platform)).
 
 Scale it without touching code — set any of these before `submit.py`:
 
@@ -324,8 +327,14 @@ MARATHON_RUNTIME_MIN=360 MARATHON_TRIAL_MIN=5 uv run python examples/cifar-gpu-m
 ### Cluster Gotchas Baked Into the Code
 
 - **The head node has no torch.** The job driver must never `import torch`, and every actor return value must be plain JSON primitives. Returning e.g. `torch.__version__` (a `TorchVersion` str-subclass) embeds a torch-module reference in the pickle — unpickling on the head fails with `ModuleNotFoundError` and kills the job. Catch exceptions inside GPU code and return `str(...)` summaries.
-- **vGPU memory is capped (~2 GiB per worker).** The config space constrains `width` against `batch` (measured: batch 256 / width 64 ≈ 1.05 GiB peak) and OOM'd trials are reported and skipped, not fatal.
-- **Workers are 1.5 CPU / 3.5 GiB RAM.** Data augmentation stays in numpy, evaluation batches are 512.
+- **vGPU memory is a slice of the card you provisioned** (default 20%:
+  ~2.4 GiB on the TITAN V, ~6.5 GiB on an RTX 5090; 50% = 16 GiB on a
+  5090). The config space constrains `width` against `batch` (measured:
+  batch 256 / width 64 ≈ 1.05 GiB peak) and OOM'd trials are reported and
+  skipped, not fatal.
+- **Default workers are 3 CPU / 6 GiB RAM** (1.5 CPU was measured
+  CPU-bound at 21–25% GPU util). Data augmentation stays in numpy,
+  evaluation batches are 512.
 - **MLflow artifact uploads currently fail** with `PermissionError` from job pods (`log_text`/`log_artifact`); metrics and params log fine. The marathon therefore stores model weights in S3 and logs metrics to MLflow; the summary is printed as `RESULT_JSON` on stdout instead of an artifact.
 
 ---
@@ -340,8 +349,8 @@ more competing inside one shared cluster. This happens automatically:
 which creates on first use:
 
 - a Volcano queue `u-<username>` with a fair-share **weight** (relative share
-  when GPUs are contended) and a hard **capability** ceiling (default: 2 GPU
-  workers + your head pod);
+  when GPUs are contended) and a hard **capability** ceiling (default:
+  8 CPU / 16 Gi / 4 vGPUs, head pod included);
 - a RayCluster `ray-<username>` (workers scale 0 → max inside your queue) at
   `ray-<username>.c.dai.fmph.uniba.sk` behind the same Keycloak login;
 - an idle garbage collector that deletes clusters unused for 24 h (recreated
@@ -354,12 +363,16 @@ mode, worker image from the admin catalog), cluster status, quota visibility,
 job list/logs/submit, a ~60-minute token panel with copy-paste
 `RAY_ADDRESS`/`RAY_AUTH_TOKEN` snippets, and a Stop button.
 
-**Worker sizing:** the default capability is 4.5 CPU / 9.5 Gi / 2 vGPUs and
-the head pod reserves 1.5 CPU / 2.5 Gi of it. The default worker shape
-(1.5 CPU / 3.5 Gi / 1 vGPU) fits exactly two workers; fatter workers buy
-fewer slots (`max_workers = (4.5 − 1.5) / cpus_per_worker`) and leave GPU
-capability unreachable. Prefer the defaults unless a single fat worker is
-explicitly what you want.
+**Worker sizing (what you control):** per worker you choose CPUs, memory,
+GPU count, GPU model, sharing mode (fraction or exact GiB), and the image
+from the admin catalog. The default shape is 3 CPU / 6 GiB / 1 vGPU — two
+workers fit the 8 CPU / 16 Gi ceiling after the 1 CPU / 2 Gi head
+reservation, and two of them also fit the small TITAN V node. Fatter
+workers buy fewer slots (`max_workers = (8 − 1) / cpus_per_worker`, floored
+and vGPU-capped), up to a single 7 CPU / 14 Gi worker that can actually
+feed a whole RTX 5090 — 1.5 CPU workers measured only 21–25% GPU util.
+Platform-fixed: the head pod shape, the per-user ceiling, and the derived
+worker count.
 
 **Worker images:** the GPU stack comes baked into catalog images (default
 `torch28-cu128`: PyTorch 2.8 + CUDA 12.8 + mlflow + boto3). Never ship
